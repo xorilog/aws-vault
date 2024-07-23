@@ -1,5 +1,6 @@
-version: "2.4"
 networks:
+  default:
+    driver: bridge
   aws-vault:
     driver: bridge
     ipam:
@@ -7,16 +8,45 @@ networks:
         - subnet: "169.254.170.0/24"
           gateway: "169.254.170.1"
 services:
-  aws-vault-proxy:
-    build: .
+  socat-unix-to-tcp:
+    build:
+      context: .
+      target: socat-proxy
     environment:
-     - AWS_CONTAINER_CREDENTIALS_FULL_URI
-     - AWS_CONTAINER_AUTHORIZATION_TOKEN
+      - AWS_CONTAINER_CREDENTIALS_FULL_URI
+
+#    image: aws-vault-socat:local
+    command: ["socat", "-d", "-d", "UNIX-LISTEN:/sockets/aws-vault.sock,fork,reuseaddr,unlink-early,mode=777", "TCP4:127.0.0.1:AWS_VAULT_DYNAMIC_PORT"]
+    volumes:
+      - ./sockets:/sockets:rw
+    network_mode: host
+  socat-tcp-to-unix:
+    build:
+      context: .
+      target: socat-proxy
+#    image: aws-vault-socat:local
+    command: ["socat", "-d", "-d", "TCP4-LISTEN:20000,fork,reuseaddr", "UNIX-CONNECT:/sockets/aws-vault.sock"]
+    volumes:
+      - ./sockets:/sockets:rw
+    ports:
+      - 20000:20000
     networks:
       aws-vault:
-        ipv4_address: "169.254.170.2" # This special IP address is recognized by the AWS SDKs and AWS CLI
+        ipv4_address: 169.254.170.3 # fixing the IP to handle it locally.
+  aws-vault-proxy:
+    build:
+      context: .
+      target: aws-vault-proxy
+    environment:
+      - AWS_CONTAINER_CREDENTIALS_FULL_URI
+      - AWS_CONTAINER_AUTHORIZATION_TOKEN
+    networks:
+      aws-vault:
+        ipv4_address: 169.254.170.2 # This special IP address is recognized by the AWS SDKs and AWS CLI
     healthcheck:
       test: pgrep aws-vault-proxy
+#    extra_hosts:
+#      - "host.docker.internal:host-gateway"
   testapp:
     image: amazon/aws-cli
     entrypoint: ""
@@ -24,5 +54,5 @@ services:
     environment:
       - AWS_CONTAINER_CREDENTIALS_RELATIVE_URI
     networks:
+      default:
       aws-vault: {}
-      default: {}
